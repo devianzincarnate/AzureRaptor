@@ -7,7 +7,7 @@ Please note that this uses the Let's Encrypt configuration and therefore require
 Prerequisites:
 - Domain Name
 - DNS Service (e.g. Cloudflare)
-- An Azure subscription and an appropriate level of access (e.g. Contributor)
+- An Azure subscription and an appropriate level of access (e.g. Owner - required for assigning RBAC)
 
 AzureRaptor deploys the following:
 - An Azure resource group
@@ -39,7 +39,5 @@ AzureRaptor deploys the following:
 
 8. For SSH access to the VM, check the key vault inside the deployed resource group.
 
-
-
-NOTES: For added security, remove the Port 80 allow rule on the Network Security Group and restrict HTTPS access to the external IP address of sites
-where agents are connecting in from. You may not be able to do the latter if there are a large proportion of home users and VPN split tunnelling is allowed.
+NOTES: For added security, remove the Port 80 allow rule on the Network Security Group (after connecting to the console for the first time as it is required by Let's Encrypt when issuing a cert) and restrict HTTPS access to the external IP address of sites
+where console access is required and where agents are connecting in from. You may not be able to do the latter if there are a large proportion of home users and VPN split tunnelling is allowed.
