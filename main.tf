@@ -141,17 +141,16 @@ sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
 sudo systemctl daemon-reload
 sudo systemctl enable --now velociraptor
 
-
+# Download and install AzCopy
 wget https://aka.ms/downloadazcopy-v10-linux
 tar -xvf downloadazcopy-v10-linux
-
 sudo rm -f /usr/bin/azcopy
 sudo cp ./azcopy_linux_amd64_*/azcopy /usr/bin/
 sudo chmod 755 /usr/bin/azcopy
-
 rm -f downloadazcopy-v10-linux
 rm -rf ./azcopy_linux_amd64_*/
 
+# Set variable to allow AzCopy to log in using Managed Service Identity
 export AZCOPY_AUTO_LOGIN_TYPE=MSI
 
 # Create folder for client files
@@ -173,9 +172,10 @@ sudo velociraptor --config /etc/velociraptor/clientrepo/client.config.yaml debia
 # Generate CentOS/RHEL installer
 sudo velociraptor --config /etc/velociraptor/clientrepo/client.config.yaml rpm client --output "/etc/velociraptor/clientrepo/export/VRInstaller_$(date +"%d-%m-%y").rpm"
 
-# Note - all installers are located in /etc/velociraptor/clientrepo
+# Copy Velociraptor agents to Azure Blob Storage Container
 azcopy copy "/etc/velociraptor/clientrepo/export/*" ${azurerm_storage_container.velociraptor.id}
 
+# Delay reboot by 1 minute to allow for AzCopy to finish
 sleep 1m
 
 # Reboot machine
@@ -437,6 +437,6 @@ resource "azurerm_storage_container" "velociraptor" {
 
 resource "azurerm_role_assignment" "velociraptor" {
   scope                = azurerm_storage_account.velociraptor.id
-  role_definition_name = "Storage Blob Data Owner"
+  role_definition_name = "Storage Blob Data Contributor"
   principal_id         = "${azurerm_virtual_machine.main.identity.0.principal_id}"
 }
