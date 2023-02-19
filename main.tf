@@ -22,8 +22,8 @@ data "azuread_client_config" "vr_azuread_config" {
 }
 
 variable "prefix" {
-default = "VR-op-name"
-description = "Prefix appended to resource names - format 'VR-op-name'"
+default = "vr"
+description = "Prefix appended to resource names"
 }
 
 variable "vr_allowlist_ip" {
@@ -39,7 +39,7 @@ description = "Owner of Azure App Registration for SSO"
 
 variable "vr_managed_disk_type" {
 type = string
-default = "StandardSSD_LRS"
+default = "Premium_LRS"
 description = "Disk SKU for Velociraptor Server"
 }
 
@@ -320,12 +320,12 @@ resource "azurerm_virtual_machine" "main" {
     name              = "${var.prefix}-osdisk"
     caching           = "ReadWrite"
     create_option     = "FromImage"
-    managed_disk_type = "StandardSSD_LRS"
+    managed_disk_type = var.vr_managed_disk_type
     disk_size_gb      = var.vr_os_disk_size
   }
   os_profile {
     computer_name  = "velociraptor"
-    admin_username = "vm-admin"
+    admin_username = "vr-admin"
     admin_password = random_password.vr_vmpassword.result
     custom_data = base64encode(local.custom_data)
   }
@@ -431,12 +431,12 @@ resource "azurerm_key_vault" "vr_kv" {
 }
 #Create KeyVault VM password
 resource "random_password" "vr_vmpassword" {
-  length  = 20
+  length  = 32
   special = true
 }
 #Create Key Vault Secret
 resource "azurerm_key_vault_secret" "vr_vmpassword" {
-  name         = "vmpassword"
+  name         = "VR_VMPassword"
   value        = random_password.vr_vmpassword.result
   key_vault_id = azurerm_key_vault.vr_kv.id
   depends_on   = [azurerm_key_vault.vr_kv]
