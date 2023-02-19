@@ -109,8 +109,14 @@ locals {
 sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get dist-upgrade -y
 
-# Download Velociraptor Linux binary to /usr/local/bin and make it executable
-sudo wget -O /usr/local/bin/velociraptor "https://github.com/Velocidex/velociraptor/releases/download/v0.6.7-5/velociraptor-v0.6.7-5-linux-amd64"
+# Download latest Velociraptor Linux binary to /usr/local/bin and make it executable
+curl -s https://api.github.com/repos/Velocidex/velociraptor/releases/latest \
+| grep "browser_download_url.*linux-amd64*" \
+| grep -v "sig" \
+| head -1 \
+| cut -d : -f 2,3 \
+| tr -d \", \
+| wget -O /usr/local/bin/velociraptor -qi -
 sudo chmod +x /usr/local/bin/velociraptor
 
 # Generate new Velociraptor server configuration with some preset variables and change permissions
@@ -159,11 +165,27 @@ sudo mkdir -p /etc/velociraptor/clientrepo/export
 # Generate new Velociraptor client config based on the preset variables in the server config
 sudo velociraptor config client -c /etc/velociraptor.config.yaml > /etc/velociraptor/clientrepo/client.config.yaml
 
+# Get latest Velociraptor MSI installer name
+export VR_WIN_CURRENT_AGENT_VERSION=/etc/velociraptor/clientrepo/$(curl -s https://api.github.com/repos/Velocidex/velociraptor/releases/latest \
+| grep "name.*msi*" \
+| grep -v "sig" \
+| head -1 \
+| cut -d : -f 2,3 \
+| tr -d \", \
+| xargs )
+
 # Download Velociraptor MSI source installer
-sudo wget -O /etc/velociraptor/clientrepo/velociraptor-v0.6.7-4-windows-amd64.msi "https://github.com/Velocidex/velociraptor/releases/download/v0.6.7-5/velociraptor-v0.6.7-4-windows-amd64.msi"
+curl -s https://api.github.com/repos/Velocidex/velociraptor/releases/latest \
+| grep "browser_download_url.*msi*" \
+| grep -v "sig" \
+| head -1 \
+| cut -d : -f 2,3 \
+| tr -d \" \
+| sudo wget -O $VR_WIN_CURRENT_AGENT_VERSION -qi -
+
 
 # Generate MSI installer with today's date
-sudo velociraptor config repack --msi /etc/velociraptor/clientrepo/velociraptor-v0.6.7-4-windows-amd64.msi /etc/velociraptor/clientrepo/client.config.yaml /etc/velociraptor/clientrepo/VRInstaller.msi
+sudo velociraptor config repack --msi $VR_WIN_CURRENT_AGENT_VERSION /etc/velociraptor/clientrepo/client.config.yaml /etc/velociraptor/clientrepo/VRInstaller.msi
 sudo mv /etc/velociraptor/clientrepo/VRInstaller.msi "/etc/velociraptor/clientrepo/export/VRInstaller_$(date +"%d-%m-%y").msi"
 
 # Generate Debian installer
