@@ -176,11 +176,10 @@ sudo velociraptor --config /etc/velociraptor/clientrepo/client.config.yaml rpm c
 # Note - all installers are located in /etc/velociraptor/clientrepo
 azcopy copy "/etc/velociraptor/clientrepo/export/*" ${azurerm_storage_container.velociraptor.id}
 
-
-
+sleep 1m
 
 # Reboot machine
-# sudo reboot
+sudo reboot
   CUSTOM_DATA
   }
 
