@@ -95,6 +95,10 @@ default = "badmin@evilcorp.io"
 description = "Default administrator user"
 }
 
+resource "random_id" "rid" {
+  byte_length = 5
+}
+
 
 
 locals {
@@ -137,8 +141,21 @@ sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
 sudo systemctl daemon-reload
 sudo systemctl enable --now velociraptor
 
+
+wget https://aka.ms/downloadazcopy-v10-linux
+tar -xvf downloadazcopy-v10-linux
+
+sudo rm -f /usr/bin/azcopy
+sudo cp ./azcopy_linux_amd64_*/azcopy /usr/bin/
+sudo chmod 755 /usr/bin/azcopy
+
+rm -f downloadazcopy-v10-linux
+rm -rf ./azcopy_linux_amd64_*/
+
+export AZCOPY_AUTO_LOGIN_TYPE=MSI
+
 # Create folder for client files
-sudo mkdir -p /etc/velociraptor/clientrepo
+sudo mkdir -p /etc/velociraptor/clientrepo/export
 
 # Generate new Velociraptor client config based on the preset variables in the server config
 sudo velociraptor config client -c /etc/velociraptor.config.yaml > /etc/velociraptor/clientrepo/client.config.yaml
@@ -148,18 +165,22 @@ sudo wget -O /etc/velociraptor/clientrepo/velociraptor-v0.6.7-4-windows-amd64.ms
 
 # Generate MSI installer with today's date
 sudo velociraptor config repack --msi /etc/velociraptor/clientrepo/velociraptor-v0.6.7-4-windows-amd64.msi /etc/velociraptor/clientrepo/client.config.yaml /etc/velociraptor/clientrepo/VRInstaller.msi
-sudo mv /etc/velociraptor/clientrepo/VRInstaller.msi "/etc/velociraptor/clientrepo/VRInstaller_$(date +"%d-%m-%y").msi"
+sudo mv /etc/velociraptor/clientrepo/VRInstaller.msi "/etc/velociraptor/clientrepo/export/VRInstaller_$(date +"%d-%m-%y").msi"
 
 # Generate Debian installer
-sudo velociraptor --config /etc/velociraptor/clientrepo/client.config.yaml debian client --output "/etc/velociraptor/clientrepo/VRInstaller_$(date +"%d-%m-%y").deb"
+sudo velociraptor --config /etc/velociraptor/clientrepo/client.config.yaml debian client --output "/etc/velociraptor/clientrepo/export/VRInstaller_$(date +"%d-%m-%y").deb"
 
 # Generate CentOS/RHEL installer
-sudo velociraptor --config /etc/velociraptor/clientrepo/client.config.yaml rpm client --output "/etc/velociraptor/clientrepo/VRInstaller_$(date +"%d-%m-%y").rpm"
+sudo velociraptor --config /etc/velociraptor/clientrepo/client.config.yaml rpm client --output "/etc/velociraptor/clientrepo/export/VRInstaller_$(date +"%d-%m-%y").rpm"
 
 # Note - all installers are located in /etc/velociraptor/clientrepo
+azcopy copy "/etc/velociraptor/clientrepo/export/*" ${azurerm_storage_container.velociraptor.id}
+
+
+
 
 # Reboot machine
-sudo reboot
+# sudo reboot
   CUSTOM_DATA
   }
 
@@ -263,6 +284,9 @@ resource "azurerm_virtual_machine" "main" {
   delete_os_disk_on_termination = false
   delete_data_disks_on_termination = false
 
+  identity {
+    type    = "SystemAssigned"    
+  }
 
 
   storage_image_reference {
@@ -356,7 +380,7 @@ resource "azuread_application_password" "velociraptor_app_password" {
 }
 
 resource "azurerm_key_vault" "vr_kv" {
-  name                        = "${var.prefix}-kv"
+  name                        = "${var.prefix}-kv-${random_id.rid.hex}"
   location                    = azurerm_resource_group.velociraptor.location
   resource_group_name         = azurerm_resource_group.velociraptor.name
   enabled_for_disk_encryption = true
@@ -368,7 +392,7 @@ resource "azurerm_key_vault" "vr_kv" {
 
   access_policy {
     tenant_id = data.azurerm_client_config.vr_azurerm_config.tenant_id
-    object_id = data.azuread_client_config.vr_azuread_config.object_id
+    object_id = var.vr_azure_application_owner
 
     key_permissions = [
       "Get",
@@ -395,4 +419,25 @@ resource "azurerm_key_vault_secret" "vr_vmpassword" {
   value        = random_password.vr_vmpassword.result
   key_vault_id = azurerm_key_vault.vr_kv.id
   depends_on   = [azurerm_key_vault.vr_kv]
+}
+
+resource "azurerm_storage_account" "velociraptor" {
+  name                            = "${var.prefix}${random_id.rid.hex}sa"
+  resource_group_name             = azurerm_resource_group.velociraptor.name
+  location                        = azurerm_resource_group.velociraptor.location
+  account_replication_type        = "LRS"
+  account_tier                    = "Standard"
+  min_tls_version = "TLS1_2"
+}
+
+resource "azurerm_storage_container" "velociraptor" {
+  name                  = "${var.prefix}-container"
+  storage_account_name  = azurerm_storage_account.velociraptor.name
+  container_access_type = "private"
+}
+
+resource "azurerm_role_assignment" "velociraptor" {
+  scope                = azurerm_storage_account.velociraptor.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = "${azurerm_virtual_machine.main.identity.0.principal_id}"
 }
