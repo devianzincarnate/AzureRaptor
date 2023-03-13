@@ -11,14 +11,7 @@ provider "azurerm" {
   features {}
 }
 
-provider "azuread" {
-}
-
-
 data "azurerm_client_config" "vr_azurerm_config" {
-}
-
-data "azuread_client_config" "vr_azuread_config" {
 }
 
 variable "prefix" {
