@@ -122,6 +122,11 @@ sudo chmod +x /usr/local/bin/velociraptor
 # Generate new Velociraptor server configuration with some preset variables and change permissions
 sudo velociraptor config generate --merge '{"Client":{"server_urls":["https://${var.vr_domain}/"]},"GUI":{"bind_address":"127.0.0.1","bind_port":443,"public_url":"https://${var.vr_domain}/","initial_users":[{"name":"${var.vr_user}"}],"authenticator":{"type":"Azure","oauth_client_id":"${azuread_application.velociraptor.application_id}","oauth_client_secret":"${azuread_application_password.velociraptor_app_password.value}","tenant":"${data.azurerm_client_config.vr_azurerm_config.tenant_id}"}}, "Frontend":{"hostname":"${var.vr_domain}","bind_address":"0.0.0.0","bind_port":443},"autocert_domain":"${var.vr_domain}","autocert_cert_cache":"/etc/velociraptor/"}' > /etc/velociraptor.config.yaml
 
+# Grant users access to Velociraptor and modify role to administrator.
+# Copy the following lines and modify as many times as required for your users.
+velociraptor --config /etc/velociraptor.config.yaml user add sysadmin@evilcorp.io
+velociraptor acl grant sysadmin@evilcorp.io --role administrator -c /etc/velociraptor.config.yaml
+
 
 # Create Velociraptor as a service to be started when the server starts.
 sudo echo "[Unit]
@@ -436,7 +441,7 @@ resource "random_password" "vr_vmpassword" {
 }
 #Create Key Vault Secret
 resource "azurerm_key_vault_secret" "vr_vmpassword" {
-  name         = "VR_VMPassword"
+  name         = "VRVMPassword"
   value        = random_password.vr_vmpassword.result
   key_vault_id = azurerm_key_vault.vr_kv.id
   depends_on   = [azurerm_key_vault.vr_kv]
