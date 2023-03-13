@@ -1,0 +1,13 @@
+prefix = "vr"
+vr_allowlist_ip = "1.2.3.4"
+vr_azure_application_owner = "00000000-0000-0000-0000-000000000000"
+vr_domain = "velociraptor.evilcorp.io"
+vr_managed_disk_type = "Premium_LRS"
+vr_os_disk_size = 1024
+vr_os_offer = "0001-com-ubuntu-server-jammy"
+vr_os_publisher = "Canonical"
+vr_os_sku = "22_04-lts"
+vr_os_version = "latest"
+vr_rg_location = "Australia East"
+vr_vm_sku = "Standard_D2as_v5"
+vr_user = "badmin@evilcorp.io"
