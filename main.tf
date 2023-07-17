@@ -2,7 +2,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-       version = "3.41.0"
+       version = "3.61.0"
     }
   }
 }
@@ -25,9 +25,9 @@ default = "1.2.3.4"
 description = "Allowed IP for Velociraptor SSH on the NSG"
 }
 
-variable "vr_azure_application_owner" {
+variable "vr_security_group" {
 default = "00000000-0000-0000-0000-000000000000"
-description = "Owner of Azure App Registration for SSO"
+description = "Assigns the defined group or user with privileges to access Velociraptor RG, key vault and storage"
 }
 
 variable "vr_managed_disk_type" {
@@ -88,11 +88,26 @@ default = "badmin@evilcorp.io"
 description = "Default administrator user"
 }
 
-resource "random_id" "rid" {
-  byte_length = 5
+variable "dns_zone_name" {
+default = "evilcorp.io"
+description = "Domain name for the Azure DNS Zone"
 }
 
+variable "dns_zone_rgname" {
+default = "RG-Evilcorp"
+description = "Name of the resource group for the Azure DNS Zone"
+}
 
+variable "dns_zone_servername" {
+default = "velociraptor"
+description = "Server name to use for the Azure DNS Zone A record"
+}
+
+resource "random_id" "rid" {
+  byte_length = 3
+}
+
+# Define Velociraptor configuration script to be run as part of cloud-init
 
 locals {
   custom_data = <<CUSTOM_DATA
@@ -113,13 +128,9 @@ curl -s https://api.github.com/repos/Velocidex/velociraptor/releases/latest \
 sudo chmod +x /usr/local/bin/velociraptor
 
 # Generate new Velociraptor server configuration with some preset variables and change permissions
-sudo velociraptor config generate --merge '{"Client":{"server_urls":["https://${var.vr_domain}/"]},"GUI":{"bind_address":"127.0.0.1","bind_port":443,"public_url":"https://${var.vr_domain}/","initial_users":[{"name":"${var.vr_user}"}],"authenticator":{"type":"Azure","oauth_client_id":"${azuread_application.velociraptor.application_id}","oauth_client_secret":"${azuread_application_password.velociraptor_app_password.value}","tenant":"${data.azurerm_client_config.vr_azurerm_config.tenant_id}"}}, "Frontend":{"hostname":"${var.vr_domain}","bind_address":"0.0.0.0","bind_port":443},"autocert_domain":"${var.vr_domain}","autocert_cert_cache":"/etc/velociraptor/"}' > /etc/velociraptor.config.yaml
-
-# Grant users access to Velociraptor and modify role to administrator.
-# Copy the following lines and modify as many times as required for your users.
-velociraptor --config /etc/velociraptor.config.yaml user add sysadmin@evilcorp.io
-velociraptor acl grant sysadmin@evilcorp.io --role administrator -c /etc/velociraptor.config.yaml
-
+sudo velociraptor config generate --merge '{"Client":{"server_urls":["https://${var.vr_domain}/"],"writeback_linux":"/etc/velociraptor.writeback.yaml","writeback_windows":"/Program Files/Velociraptor/velociraptor.writeback.yaml"},"API":{"hostname":"${var.vr_domain}","bind_address":"127.0.0.1","bind_port":8001,"bind_scheme":"tcp"},"GUI":{"bind_address":"0.0.0.0","bind_port":8889,"public_url":"https://${var.vr_domain}/","authenticator":{"type":"Basic"}},"Frontend":{"hostname":"${var.vr_domain}","bind_address":"0.0.0.0","bind_port":443},"autocert_domain":"${var.vr_domain}","autocert_cert_cache":"/etc/velociraptor"}' > /etc/velociraptor.config.yaml
+# Grant user access to Velociraptor and modify role to administrator.
+velociraptor user add --role=administrator ${var.vr_user} ${random_password.vr_adminpassword.result} --config /etc/velociraptor.config.yaml
 
 # Create Velociraptor as a service to be started when the server starts.
 sudo echo "[Unit]
@@ -203,11 +214,13 @@ sudo reboot
   CUSTOM_DATA
   }
 
+# Create resource group for Velociraptor
 resource "azurerm_resource_group" "velociraptor" {
   name     = "${var.prefix}-RG"
   location = var.vr_rg_location
 }
 
+# Create virtual network to be used by Velociraptor
 resource "azurerm_virtual_network" "main" {
   name                = "${var.prefix}-vnet"
   address_space       = ["10.0.0.0/16"]
@@ -215,12 +228,16 @@ resource "azurerm_virtual_network" "main" {
   resource_group_name = azurerm_resource_group.velociraptor.name
 }
 
+# Create associated subnet
 resource "azurerm_subnet" "internal" {
   name                 = "${var.prefix}-subnet"
   resource_group_name  = azurerm_resource_group.velociraptor.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = ["10.0.2.0/24"]
 }
+
+# Create NSG and lock down SSH and management ports to approved IPs.
+# 443 and 80 are required for Let's Encrypt certificate issuing - 80 can be removed after resource creation and first logon to Velociraptor.
 
 resource "azurerm_network_security_group" "nsg" {
   name                = "${var.prefix}-nsg"
@@ -241,13 +258,25 @@ resource "azurerm_network_security_group" "nsg" {
 
   security_rule {
     name                       = "Allow_HTTPS"
-    priority                   = 900
+    priority                   = 899
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "443"
     source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+    security_rule {
+    name                       = "Allow_GUI"
+    priority                   = 900
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8889"
+    source_address_prefix      = var.vr_allowlist_ip
     destination_address_prefix = "*"
   }
 
@@ -265,6 +294,7 @@ resource "azurerm_network_security_group" "nsg" {
 
 }
 
+# Create public IP associated with the VM, NSG and DNS
 resource "azurerm_public_ip" "pip" {
   name                = "${var.prefix}-pip"
   location            = azurerm_resource_group.velociraptor.location
@@ -272,8 +302,7 @@ resource "azurerm_public_ip" "pip" {
   allocation_method   = "Static"
 }
 
-
-
+# Create NIC associated with the VM and NSG
 resource "azurerm_network_interface" "main" {
   name                = "${var.prefix}-nic"
   location            = azurerm_resource_group.velociraptor.location
@@ -287,12 +316,13 @@ resource "azurerm_network_interface" "main" {
   }
 }
 
+# Create association between NIC and NSG
 resource "azurerm_network_interface_security_group_association" "assoc" {
   network_interface_id      = azurerm_network_interface.main.id
   network_security_group_id = azurerm_network_security_group.nsg.id
 }
 
-
+# Create Linux VM for Velociraptor application to be installed with Managed Service Identity
 resource "azurerm_virtual_machine" "main" {
   name                  = "${var.prefix}-vm"
   location              = azurerm_resource_group.velociraptor.location
@@ -336,70 +366,9 @@ resource "azurerm_virtual_machine" "main" {
   }
 }
 
-resource "azuread_application" "velociraptor" {
-
-    device_only_auth_enabled       = false
-    display_name                   = "Velociraptor"
-    fallback_public_client_enabled = false
-    group_membership_claims        = []
-    identifier_uris                = []
-    oauth2_post_response_required  = false
-    owners                         = [
-        var.vr_azure_application_owner,
-    ]
-    prevent_duplicate_names        = false
-    sign_in_audience               = "AzureADMyOrg"
-
-    api {
-        known_client_applications      = []
-        mapped_claims_enabled          = false
-        requested_access_token_version = 1
-    }
-
-
-    public_client {
-        redirect_uris = []
-    }
-
-    required_resource_access {
-        resource_app_id = "00000003-0000-0000-c000-000000000000"
-
-        resource_access {
-            id   = "7427e0e9-2fba-42fe-b0c0-848c9e6a8182"
-            type = "Scope"
-        }
-        resource_access {
-            id   = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
-            type = "Scope"
-        }
-    }
-
-    single_page_application {
-        redirect_uris = []
-    }
-
-    timeouts {}
-
-    web {
-        redirect_uris = [
-            "https://${var.vr_domain}/auth/azure/callback",
-        ]
-
-        implicit_grant {
-            access_token_issuance_enabled = false
-            id_token_issuance_enabled     = false
-        }
-    }
-}
-
-resource "azuread_application_password" "velociraptor_app_password" {
-  application_object_id = "${azuread_application.velociraptor.id}"
-  end_date              = timeadd(timestamp(), "8760h")
-
-}
-
+# Create key vault for storing VM and Velociraptor administrator credentials
 resource "azurerm_key_vault" "vr_kv" {
-  name                        = "${var.prefix}-kv-${random_id.rid.hex}"
+  name                        = "${replace(substr(var.prefix, 0, 19), "-", "")}kv${random_id.rid.hex}"
   location                    = azurerm_resource_group.velociraptor.location
   resource_group_name         = azurerm_resource_group.velociraptor.name
   enabled_for_disk_encryption = true
@@ -411,7 +380,7 @@ resource "azurerm_key_vault" "vr_kv" {
 
   access_policy {
     tenant_id = data.azurerm_client_config.vr_azurerm_config.tenant_id
-    object_id = var.vr_azure_application_owner
+    object_id = var.vr_security_group
 
     key_permissions = [
       "Get",
@@ -427,12 +396,13 @@ resource "azurerm_key_vault" "vr_kv" {
   }
 
 }
-#Create KeyVault VM password
+
+# Create KeyVault VM password
 resource "random_password" "vr_vmpassword" {
   length  = 32
   special = true
 }
-#Create Key Vault Secret
+# Create Key Vault Secret for VM password
 resource "azurerm_key_vault_secret" "vr_vmpassword" {
   name         = "VRVMPassword"
   value        = random_password.vr_vmpassword.result
@@ -440,8 +410,9 @@ resource "azurerm_key_vault_secret" "vr_vmpassword" {
   depends_on   = [azurerm_key_vault.vr_kv]
 }
 
+# Create storage account for agent uploads
 resource "azurerm_storage_account" "velociraptor" {
-  name                            = "${var.prefix}${random_id.rid.hex}sa"
+  name                            = "sa${replace(substr(var.prefix, 0, 19), "-", "")}${random_id.rid.hex}"
   resource_group_name             = azurerm_resource_group.velociraptor.name
   location                        = azurerm_resource_group.velociraptor.location
   account_replication_type        = "LRS"
@@ -449,14 +420,46 @@ resource "azurerm_storage_account" "velociraptor" {
   min_tls_version = "TLS1_2"
 }
 
+# Create storage container in storage account for uploads
 resource "azurerm_storage_container" "velociraptor" {
   name                  = "${var.prefix}-container"
   storage_account_name  = azurerm_storage_account.velociraptor.name
   container_access_type = "private"
 }
 
+# Assign user/group privileges for key vault
 resource "azurerm_role_assignment" "velociraptor" {
   scope                = azurerm_storage_account.velociraptor.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = "${azurerm_virtual_machine.main.identity.0.principal_id}"
+}
+
+# Create Velociraptor application password to be stored in key vault
+resource "random_password" "vr_adminpassword" {
+  length  = 32
+  special = false
+}
+
+# Create Key Vault Secret for Velociraptor application password
+resource "azurerm_key_vault_secret" "vr_adminpassword" {
+  name         = "VRAdminPassword"
+  value        = random_password.vr_adminpassword.result
+  key_vault_id = azurerm_key_vault.vr_kv.id
+  depends_on   = [azurerm_key_vault.vr_kv]
+}
+
+# Create DNS entry mapping for the Velociraptor server in an existing Azure DNS Zone
+resource "azurerm_dns_a_record" "vr_record" {
+  name                = var.dns_zone_servername
+  zone_name           = var.dns_zone_name
+  resource_group_name = var.dns_zone_rgname
+  ttl                 = 300
+  records             = ["${azurerm_public_ip.pip.ip_address}"]
+}
+
+# Assign contributor resource group permissions to the group
+resource "azurerm_role_assignment" "vr_contributor" {
+  scope = "/subscriptions/${data.azurerm_client_config.vr_azurerm_config.tenant_id}/resourceGroups/${azurerm_resource_group.velociraptor.name}"
+  role_definition_name = "Contributor"
+  principal_id         = var.vr_security_group
 }
