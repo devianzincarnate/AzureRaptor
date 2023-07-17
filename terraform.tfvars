@@ -1,6 +1,9 @@
+dns_zone_name = "evilcorp.io"
+dns_zone_servername = "velociraptor"
+dns_zone_rgname = "RG-EvilCorp-DNS"
 prefix = "vr"
 vr_allowlist_ip = "1.2.3.4"
-vr_azure_application_owner = "00000000-0000-0000-0000-000000000000"
+vr_security_group = "00000000-0000-0000-0000-000000000000"
 vr_domain = "velociraptor.evilcorp.io"
 vr_managed_disk_type = "Premium_LRS"
 vr_os_disk_size = 1024
