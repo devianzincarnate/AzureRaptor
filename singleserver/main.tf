@@ -14,85 +14,9 @@ provider "azurerm" {
 data "azurerm_client_config" "vr_azurerm_config" {
 }
 
-variable "prefix" {
-default = "vr"
-description = "Prefix appended to resource names"
-}
-
-variable "vr_allowlist_ip" {
-type = string
-default = "1.2.3.4"
-description = "Allowed IP for Velociraptor SSH on the NSG"
-}
-
-variable "vr_azure_application_owner" {
-default = "00000000-0000-0000-0000-000000000000"
-description = "Owner of Azure App Registration for SSO"
-}
-
-variable "vr_managed_disk_type" {
-type = string
-default = "Premium_LRS"
-description = "Disk SKU for Velociraptor Server"
-}
-
-variable "vr_os_disk_size" {
-type = number
-default = 1024
-description = "Velociraptor Server OS Disk Size (in GB)"
-}
-
-variable "vr_os_offer" {
-type = string
-default = "0001-com-ubuntu-server-jammy"
-description = "Operating system offer in Azure Marketplace"
-}
-
-variable "vr_os_publisher" {
-type = string
-default = "Canonical"
-description = "OS Publisher in Azure Marketplace"
-}
-
-variable "vr_os_sku" {
-type = string
-default = "22_04-lts"
-description = "Operating system SKU in Azure Marketplace"
-}
-
-variable "vr_os_version" {
-type = string
-default = "latest"
-description = "Operating system version in Azure Marketplace"
-}
-
-variable "vr_rg_location" {
-type = string
-default = "Australia East"
-description = "Location of the resource group in Azure"
-}
-
-variable "vr_vm_sku" {
-type = string
-default = "Standard_D2as_v5"
-description = "Velociraptor Server VM SKU"
-}
-
-variable "vr_domain" {
-default = "velociraptor.evilcorp.io"
-description = "Domain name"
-}
-
-variable "vr_user" {
-default = "badmin@evilcorp.io"
-description = "Default administrator user"
-}
-
 resource "random_id" "rid" {
   byte_length = 5
 }
-
-
 
 locals {
   custom_data = <<CUSTOM_DATA
@@ -113,7 +37,7 @@ curl -s https://api.github.com/repos/Velocidex/velociraptor/releases/latest \
 sudo chmod +x /usr/local/bin/velociraptor
 
 # Generate new Velociraptor server configuration with some preset variables and change permissions
-sudo velociraptor config generate --merge '{"Client":{"server_urls":["https://${var.vr_domain}/"]},"GUI":{"bind_address":"127.0.0.1","bind_port":443,"public_url":"https://${var.vr_domain}/","initial_users":[{"name":"${var.vr_user}"}],"authenticator":{"type":"Azure","oauth_client_id":"${azuread_application.velociraptor.application_id}","oauth_client_secret":"${azuread_application_password.velociraptor_app_password.value}","tenant":"${data.azurerm_client_config.vr_azurerm_config.tenant_id}"}}, "Frontend":{"hostname":"${var.vr_domain}","bind_address":"0.0.0.0","bind_port":443},"autocert_domain":"${var.vr_domain}","autocert_cert_cache":"/etc/velociraptor/"}' > /etc/velociraptor.config.yaml
+sudo velociraptor config generate --merge '{"Client":{"server_urls":["https://${var.velociraptor["domain"]}/"]},"GUI":{"bind_address":"127.0.0.1","bind_port":443,"public_url":"https://${var.velociraptor["domain"]}/","initial_users":[{"name":"${var.velociraptor_auth["default_admin"]}"}],"authenticator":{"type":"Azure","oauth_client_id":"${azuread_application.velociraptor.application_id}","oauth_client_secret":"${azuread_application_password.velociraptor_app_password.value}","tenant":"${data.azurerm_client_config.vr_azurerm_config.tenant_id}"}}, "Frontend":{"hostname":"${var.velociraptor["domain"]}","bind_address":"0.0.0.0","bind_port":443},"autocert_domain":"${var.velociraptor["domain"]}","autocert_cert_cache":"/etc/velociraptor/"}' > /etc/velociraptor.config.yaml
 
 # Grant users access to Velociraptor and modify role to administrator.
 # Copy the following lines and modify as many times as required for your users.
@@ -165,7 +89,7 @@ sudo velociraptor config client -c /etc/velociraptor.config.yaml > /etc/velocira
 
 # Get latest Velociraptor MSI installer name
 export VR_WIN_CURRENT_AGENT_VERSION=/etc/velociraptor/clientrepo/$(curl -s https://api.github.com/repos/Velocidex/velociraptor/releases/latest \
-| grep "name.*msi*" \
+| grep "name.*amd64.msi*" \
 | grep -v "sig" \
 | head -1 \
 | cut -d : -f 2,3 \
@@ -174,7 +98,7 @@ export VR_WIN_CURRENT_AGENT_VERSION=/etc/velociraptor/clientrepo/$(curl -s https
 
 # Download Velociraptor MSI source installer
 curl -s https://api.github.com/repos/Velocidex/velociraptor/releases/latest \
-| grep "browser_download_url.*msi*" \
+| grep "browser_download_url.*amd64.msi*" \
 | grep -v "sig" \
 | head -1 \
 | cut -d : -f 2,3 \
@@ -204,26 +128,26 @@ sudo reboot
   }
 
 resource "azurerm_resource_group" "velociraptor" {
-  name     = "${var.prefix}-RG"
-  location = var.vr_rg_location
+  name     = "${var.velociraptor["prefix"]}-RG"
+  location = var.velociraptor["rg_location"]
 }
 
 resource "azurerm_virtual_network" "main" {
-  name                = "${var.prefix}-vnet"
+  name                = "${var.velociraptor["prefix"]}-vnet"
   address_space       = ["10.0.0.0/16"]
   location            = azurerm_resource_group.velociraptor.location
   resource_group_name = azurerm_resource_group.velociraptor.name
 }
 
 resource "azurerm_subnet" "internal" {
-  name                 = "${var.prefix}-subnet"
+  name                 = "${var.velociraptor["prefix"]}-subnet"
   resource_group_name  = azurerm_resource_group.velociraptor.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = ["10.0.2.0/24"]
 }
 
 resource "azurerm_network_security_group" "nsg" {
-  name                = "${var.prefix}-nsg"
+  name                = "${var.velociraptor["prefix"]}-nsg"
   location            = azurerm_resource_group.velociraptor.location
   resource_group_name = azurerm_resource_group.velociraptor.name
 
@@ -266,7 +190,7 @@ resource "azurerm_network_security_group" "nsg" {
 }
 
 resource "azurerm_public_ip" "pip" {
-  name                = "${var.prefix}-pip"
+  name                = "${var.velociraptor["prefix"]}-pip"
   location            = azurerm_resource_group.velociraptor.location
   resource_group_name = azurerm_resource_group.velociraptor.name
   allocation_method   = "Static"
@@ -275,12 +199,12 @@ resource "azurerm_public_ip" "pip" {
 
 
 resource "azurerm_network_interface" "main" {
-  name                = "${var.prefix}-nic"
+  name                = "${var.velociraptor["prefix"]}-nic"
   location            = azurerm_resource_group.velociraptor.location
   resource_group_name = azurerm_resource_group.velociraptor.name
 
   ip_configuration {
-    name                = "${var.prefix}-ip"
+    name                = "${var.velociraptor["prefix"]}-ip"
     subnet_id                     = azurerm_subnet.internal.id
     private_ip_address_allocation = "Dynamic"
     public_ip_address_id          = azurerm_public_ip.pip.id
@@ -294,11 +218,11 @@ resource "azurerm_network_interface_security_group_association" "assoc" {
 
 
 resource "azurerm_virtual_machine" "main" {
-  name                  = "${var.prefix}-vm"
+  name                  = "${var.velociraptor["prefix"]}-vm"
   location              = azurerm_resource_group.velociraptor.location
   resource_group_name   = azurerm_resource_group.velociraptor.name
   network_interface_ids = [azurerm_network_interface.main.id]
-  vm_size               = var.vr_vm_sku
+  vm_size               = var.velociraptor_vm["vm_size"]
 
   delete_os_disk_on_termination = false
   delete_data_disks_on_termination = false
@@ -309,21 +233,21 @@ resource "azurerm_virtual_machine" "main" {
 
 
   storage_image_reference {
-    publisher = var.vr_os_publisher
-    offer     = var.vr_os_offer
-    sku       = var.vr_os_sku
-    version   = var.vr_os_version
+    publisher = var.velociraptor_vm["os_publisher"]
+    offer     = var.velociraptor_vm["os_offer"]
+    sku       = var.velociraptor_vm["os_sku"]
+    version   = var.velociraptor_vm["os_version"]
   }
   storage_os_disk {
-    name              = "${var.prefix}-osdisk"
+    name              = "${var.velociraptor["prefix"]}-osdisk"
     caching           = "ReadWrite"
     create_option     = "FromImage"
-    managed_disk_type = var.vr_managed_disk_type
-    disk_size_gb      = var.vr_os_disk_size
+    managed_disk_type = var.velociraptor_vm["managed_disk_type"]
+    disk_size_gb      = var.velociraptor_vm["os_disk_size"]
   }
   os_profile {
-    computer_name  = "velociraptor"
-    admin_username = "vr-admin"
+    computer_name  = var.velociraptor_vm["hostname"]
+    admin_username = var.velociraptor_vm["admin_username"]
     admin_password = random_password.vr_vmpassword.result
     custom_data = base64encode(local.custom_data)
   }
@@ -345,7 +269,7 @@ resource "azuread_application" "velociraptor" {
     identifier_uris                = []
     oauth2_post_response_required  = false
     owners                         = [
-        var.vr_azure_application_owner,
+        var.velociraptor_auth["azure_application_owner"],
     ]
     prevent_duplicate_names        = false
     sign_in_audience               = "AzureADMyOrg"
@@ -382,7 +306,7 @@ resource "azuread_application" "velociraptor" {
 
     web {
         redirect_uris = [
-            "https://${var.vr_domain}/auth/azure/callback",
+            "https://${var.velociraptor["domain"]}/auth/azure/callback",
         ]
 
         implicit_grant {
@@ -399,7 +323,7 @@ resource "azuread_application_password" "velociraptor_app_password" {
 }
 
 resource "azurerm_key_vault" "vr_kv" {
-  name                        = "${var.prefix}-kv-${random_id.rid.hex}"
+  name                        = "${var.velociraptor["prefix"]}-kv-${random_id.rid.hex}"
   location                    = azurerm_resource_group.velociraptor.location
   resource_group_name         = azurerm_resource_group.velociraptor.name
   enabled_for_disk_encryption = true
@@ -411,7 +335,7 @@ resource "azurerm_key_vault" "vr_kv" {
 
   access_policy {
     tenant_id = data.azurerm_client_config.vr_azurerm_config.tenant_id
-    object_id = var.vr_azure_application_owner
+    object_id = var.velociraptor_auth["default_admin"]
 
     key_permissions = [
       "Get",
@@ -441,7 +365,7 @@ resource "azurerm_key_vault_secret" "vr_vmpassword" {
 }
 
 resource "azurerm_storage_account" "velociraptor" {
-  name                            = "${var.prefix}${random_id.rid.hex}sa"
+  name                            = "${var.velociraptor["prefix"]}${random_id.rid.hex}sa"
   resource_group_name             = azurerm_resource_group.velociraptor.name
   location                        = azurerm_resource_group.velociraptor.location
   account_replication_type        = "LRS"
@@ -450,7 +374,7 @@ resource "azurerm_storage_account" "velociraptor" {
 }
 
 resource "azurerm_storage_container" "velociraptor" {
-  name                  = "${var.prefix}-container"
+  name                  = "${var.velociraptor["prefix"]}-container"
   storage_account_name  = azurerm_storage_account.velociraptor.name
   container_access_type = "private"
 }
